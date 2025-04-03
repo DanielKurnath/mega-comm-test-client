@@ -1,0 +1,133 @@
+#include <genesis.h>
+#include "serial.h"
+
+void NET_enterMonitorMode(void);
+void NET_exitMonitorMode(void);
+
+static void Vint();
+
+u8 response = 0;
+
+char str[1];
+bool Done=FALSE;
+
+int cursor_x=0;
+int cursor_y=0;
+
+//******************************************************************************
+// RETRIEVE RESPONSE
+//******************************************************************************
+void Retrieve_Response(void)
+{
+    static int tagDepth = 0;  // Variable to track the depth of nested HTML tags
+    static bool ignoreTag = FALSE;  // Flag to indicate whether to ignore characters between '<' and '>'
+
+    if (cursor_y >= 28) { VDP_clearTextAreaBG(BG_B, 0, 4, 40, 28); cursor_x=0; cursor_y=4; }
+    if (cursor_x >= 40) { cursor_x=0; cursor_y+=1; }
+
+    if (Data_Available()) 
+    {   
+        response = Serial_Read();
+        switch(response)
+        {
+            case 0x0A: // Line Feed
+                cursor_y+=1;
+                cursor_x=0;
+                break;             
+            case 0x0D: // Carriage Return
+                cursor_x=0;
+                break; 
+            case '<':  // Start of HTML tag
+                if (!ignoreTag) {
+                    tagDepth++;
+                }
+                ignoreTag = TRUE;  // Always ignore characters inside any tag
+                break;
+            case '>':  // End of HTML tag
+                ignoreTag = FALSE;  // Stop ignoring characters after tag ends
+                if (tagDepth > 0) {
+                    tagDepth--;
+                }
+                break;
+            default:   // Print Characters if not inside an HTML tag or inside <img> tags
+                if (tagDepth == 0 && !ignoreTag) {
+                    sprintf(str, "%c", response);
+                    VDP_drawText(str, cursor_x, cursor_y); cursor_x+=1;
+                }
+                break;
+        }
+    }
+}
+
+//******************************************************************************
+// HTTP 1.1 GET REQUEST
+//******************************************************************************
+void NET_getRequest(const char* hostname, const char* path, const char* port) 
+{
+    char buffer[128];
+
+    // Format and send initial connection string with hostname and port
+    sprintf(buffer, "C%s:%s\n", hostname, port);
+    Serial_Write_Msg(buffer);
+
+    // Wait for 'C' char to confirm connection
+	while(!Done) 
+	{ 
+		if (Data_Available()) 
+		{ 
+			response = Serial_Read(); 
+			if (response == 0x43) { VDP_drawText("Connected",0,cursor_y); cursor_y+=1; Done=TRUE; break; } 
+			if (response == 0x4E) { VDP_drawText("Host Unreachable",0,cursor_y); cursor_y+=1; return; } 
+		} 
+	} 
+
+    // Send the HTTP GET request line
+    sprintf(buffer, "GET %s HTTP/1.1\r\n", path);
+    Serial_Write_Msg(buffer);
+    
+    // Send the Host header
+    sprintf(buffer, "Host: %s\r\n", hostname);
+    Serial_Write_Msg(buffer);
+    
+    // Send User-Agent header
+    Serial_Write_Msg("User-Agent: smdt 0.28\r\n");
+    
+    // Send Connection header with keep-alive settings
+    Serial_Write_Msg("Connection: keep-alive; timeout=5; max=60\r\n\r\n");
+}
+
+//******************************************************************************
+// MAIN PROGRAM
+//******************************************************************************
+int main()
+{
+	VDP_setScreenWidth320();
+	VDP_setScreenHeight224();
+	VDP_setTextPlane(BG_B);
+	VDP_setTextPalette(0);
+
+	SPR_init();									  // Initialize sprite system
+	Init_Serial();                                        // Initialize Serial port
+	SYS_setVIntCallback(&Vint);			  // Setup Vertical interrupt handler callback routine
+
+	cursor_x=0;
+	cursor_y=0;
+
+	VDP_drawText("Connecting to server...",0,cursor_y); cursor_y+=1;
+    //NET_getRequest("134.209.213.152", "/index.php?section=business&loc=US", "80"); // 68k.news US BUSINESS
+    NET_getRequest("frogfind.com", "/", "80"); // frogfind.com search engine
+    //NET_getRequest("worldtimeapi.org", "/api/ip", "80"); // date/time
+	//Serial_Write_Msg("Ctheoldnet.com:6400\n");
+
+    while(1) { Retrieve_Response(); }
+
+	return(0);
+}
+
+//******************************************************************************
+// VERTICAL INTERRUPT HANDLER
+//******************************************************************************
+static void Vint()
+{
+	return;
+}
