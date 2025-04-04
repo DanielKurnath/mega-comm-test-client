@@ -1,0 +1,7 @@
+.DS_Store
+compile.sh
+makefile
+ out/
+upload.sh
+x7_upload.sh
+x7upload
